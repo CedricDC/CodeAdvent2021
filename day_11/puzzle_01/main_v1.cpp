@@ -7,8 +7,6 @@
 
 namespace {
 
-enum class Method { BRUTE_FORCE };
-
 struct Octopus {
   uint8_t value = 0;
   bool flashed = false;
@@ -31,7 +29,7 @@ void printField(const Field& field) {
   }
 }
 
-bool increaseNeighbours(Field& field, int col_idx, int row_idx) {
+bool increaseNeighbours(Field& field, int row_idx, int col_idx) {
   bool any_flash = false;
 
   // start top-left
@@ -93,12 +91,6 @@ int main(int argc, char** argv) {
     return 1;
   }
 
-  Method method = Method::BRUTE_FORCE;
-  if (argc > 2) method = static_cast<Method>(std::atoi(argv[2]));
-
-  int num_steps = 100;
-  if (argc > 3) num_steps = std::atoi(argv[3]);
-
   auto t_start = std::chrono::steady_clock::now();
   std::array<Octopus, NUM_COLS * NUM_ROWS> field;
   int linear_idx = 0;
@@ -109,49 +101,50 @@ int main(int argc, char** argv) {
     ifile.get();  // skip newline character
   }
 
-  std::size_t last_flashes = 0;
-  std::size_t iteration = 0;
+  //  printField(field);
+  std::size_t total_flashes = 0;
+  int num_steps = 100;
 
-  if (method == Method::BRUTE_FORCE) {
-    while (last_flashes < 100) {
-      last_flashes = 0;
+  for (int iter = 0; iter < num_steps; ++iter) {
+    bool any_flashed = true;
 
-      // increase all by 1
-      for (auto& oct : field) ++oct.value;
+    // increase all by 1
+    for (auto& oct : field) ++oct.value;
 
-      bool any_flashed = true;
-      while (any_flashed) {
-        any_flashed = false;
+    while (any_flashed) {
+      any_flashed = false;
 
-        // increase counters everywhere
-        int linear_idx = 0;
-        for (int row_idx = 0; row_idx < NUM_ROWS; ++row_idx) {
-          for (int col_idx = 0; col_idx < NUM_COLS; ++col_idx) {
-            if (field[linear_idx].value > 9 && !field[linear_idx].flashed) {
-              field[linear_idx].flashed = true;
-              any_flashed |= increaseNeighbours(field, col_idx, row_idx);
-            }
-            ++linear_idx;
+      // increase counters everywhere
+      int linear_idx = 0;
+      for (int row_idx = 0; row_idx < NUM_ROWS; ++row_idx) {
+        for (int col_idx = 0; col_idx < NUM_COLS; ++col_idx) {
+          if (field[linear_idx].value > 9 && !field[linear_idx].flashed) {
+            field[linear_idx].flashed = true;
+            any_flashed |= increaseNeighbours(field, row_idx, col_idx);
           }
+          ++linear_idx;
         }
       }
-
-      // traverse one more time to count flashes and wrap counters
-      for (auto& oct : field) {
-        if (oct.flashed) {
-          ++last_flashes;
-          oct.flashed = 0;
-          oct.value = 0;
-        }
-      }
-
-      ++iteration;
     }
+
+    // traverse one more time to count flashes and wrap counters
+    for (auto& oct : field) {
+      if (oct.flashed) {
+        ++total_flashes;
+        oct.flashed = 0;
+        oct.value = 0;
+      }
+    }
+
+    //      std::cout << "After iteration " << iter << std::endl;
+    //      printField(field);
+    //      std::cout << "total flashes: " << total_flashes << std::endl;
+    //      std::cin.get();
   }
 
   auto t_end = std::chrono::steady_clock::now();
 
-  std::cout << "First synced flash in iteration: " << iteration << std::endl;
+  std::cout << "Total number of flashes: " << total_flashes << std::endl;
   std::cout << "Execution took "
             << std::chrono::duration_cast<std::chrono::microseconds>(t_end - t_start).count()
             << " us" << std::endl;
