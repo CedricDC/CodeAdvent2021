@@ -168,8 +168,7 @@ bool readTokens(std::ifstream& ifile, std::string& token1, std::string& token2) 
 
 int main(int argc, char** argv) {
   if (argc < 2) {
-    std::cout << "Required input arguments: <filename> (optional: <method> <num_steps>)"
-              << std::endl;
+    std::cout << "Required input arguments: <filename>" << std::endl;
     return 1;
   }
 
