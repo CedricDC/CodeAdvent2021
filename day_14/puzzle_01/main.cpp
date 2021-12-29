@@ -12,7 +12,10 @@
 // - every possible pair of characters has an insertion
 namespace {
 
+enum class Method { BRUTE_FORCE, SEQUENTIAL };
+
 using PolyMap = std::map<std::string, char>;
+using CharCounter = std::map<char, std::size_t>;
 
 // return polymer length after N steps
 constexpr std::size_t polyLength(std::size_t start_length, std::size_t num_steps) {
@@ -34,15 +37,14 @@ PolyMap readMapping(std::ifstream& ifile) {
   return polymer_mapping;
 }
 
-void printMapping(const PolyMap& mapping) {
+[[maybe_unused]] void printMapping(const PolyMap& mapping) {
   for (const auto& [key, value] : mapping) {
     std::cout << key << " --> " << value << std::endl;
   }
 }
 
-std::map<char, std::size_t> buildPolymerBruteForce(const PolyMap& mapping,
-                                                   const std::string& start_string,
-                                                   std::size_t num_steps) {
+CharCounter buildPolymerBruteForce(const PolyMap& mapping, const std::string& start_string,
+                                   std::size_t num_steps) {
   std::list<char> final_string;
   std::map<char, std::size_t> char_counter;
 
@@ -74,26 +76,22 @@ std::map<char, std::size_t> buildPolymerBruteForce(const PolyMap& mapping,
   return char_counter;
 }
 
-std::map<char, std::size_t> buildPolymerSegmented(const PolyMap& mapping,
-                                                  const std::string& start_string,
-                                                  std::size_t num_steps) {
+// Treat each character individually, starting from the back
+//
+// E.g. We know that the very last character will "react" num_steps times,
+// each time with the character just generated previously
+//
+// After one step, the newly generated second-to-last character will react
+// num_steps-1 times, etc
+//
+// For simplicity, we will keep track of this using a stack, where
+// each element is (character, number of steps)
+//
+CharCounter buildPolymerSequential(const PolyMap& mapping, const std::string& start_string,
+                                   std::size_t num_steps) {
   using Operation = std::pair<char, int>;  // end character, and how many steps to take
   std::map<char, std::size_t> char_counter;
   std::vector<Operation> operation_stack;
-
-  std::string final_string;
-  auto print_stack = [](const std::vector<Operation>& stack) {
-    for (auto elem : stack) std::cout << "(" << elem.first << ", " << elem.second << "), ";
-    std::cout << std::endl;
-  };
-  auto print_final = [&]() {
-    for (auto crit = final_string.crbegin(); crit != final_string.crend(); ++crit)
-      std::cout << *crit << " ";
-    std::cout << std::endl;
-  };
-
-  std::cout << "Starting stack: " << std::endl;
-  print_stack(operation_stack);
 
   for (auto c : start_string) operation_stack.emplace_back(c, num_steps);
 
@@ -114,14 +112,9 @@ std::map<char, std::size_t> buildPolymerSegmented(const PolyMap& mapping,
       } else {
         ++char_counter[key[1]];
         ++char_counter[inserted];
-        final_string.push_back(key[1]);
-        final_string.push_back(inserted);
       }
     }
   }
-
-  final_string.push_back(operation_stack.front().first);
-  print_final();
 
   return char_counter;
 }
@@ -130,7 +123,7 @@ std::map<char, std::size_t> buildPolymerSegmented(const PolyMap& mapping,
 
 int main(int argc, char** argv) {
   if (argc < 2) {
-    std::cout << "Required input arguments: <filename>" << std::endl;
+    std::cout << "Required input arguments: <filename> <num_steps> <method>" << std::endl;
     return 1;
   }
 
@@ -140,6 +133,11 @@ int main(int argc, char** argv) {
   unsigned int num_steps = 10;
   if (argc > 2) {
     num_steps = std::atol(argv[2]);
+  }
+
+  Method method = Method::BRUTE_FORCE;
+  if (argc > 3) {
+    method = static_cast<Method>(std::atoi(argv[3]));
   }
 
   if (!ifile.good()) {
@@ -160,15 +158,25 @@ int main(int argc, char** argv) {
   // parse mappings
   auto mapping = readMapping(ifile);
 
-  /*
-   * option 1 : brute force
-   */
-  //  auto char_counter = buildPolymerBruteForce(mapping, start_string, num_steps);
+  CharCounter char_counter;
 
-  /*
-   * option 2 : Approach for big polymers, cannot save whole thing in memory
-   */
-  auto char_counter = buildPolymerSegmented(mapping, start_string, num_steps);
+  switch (method) {
+    case Method::BRUTE_FORCE: {
+      std::cout << "Brute force method" << std::endl;
+      /*
+       * option 1 : brute force
+       */
+      char_counter = buildPolymerBruteForce(mapping, start_string, num_steps);
+    } break;
+    case Method::SEQUENTIAL: {
+      std::cout << "Sequential method" << std::endl;
+
+      /*
+       * option 2 : Approach for big polymers, cannot save whole thing in memory
+       */
+      char_counter = buildPolymerSequential(mapping, start_string, num_steps);
+    } break;
+  }
 
   // compute desired result
   std::size_t most_common = 0;
