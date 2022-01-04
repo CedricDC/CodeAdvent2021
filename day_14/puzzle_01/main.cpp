@@ -4,6 +4,7 @@
 #include <limits>
 #include <list>
 #include <map>
+#include <memory>
 #include <string>
 #include <utility>
 #include <vector>
@@ -12,7 +13,7 @@
 // - every possible pair of characters has an insertion
 namespace {
 
-enum class Method { BRUTE_FORCE, SEQUENTIAL };
+enum class Method { BRUTE_FORCE, SEQUENTIAL, TREE };
 
 using PolyMap = std::map<std::string, char>;
 using CharCounter = std::map<char, std::size_t>;
@@ -41,6 +42,11 @@ PolyMap readMapping(std::ifstream& ifile) {
   for (const auto& [key, value] : mapping) {
     std::cout << key << " --> " << value << std::endl;
   }
+}
+
+    [[maybe_unused]] void printCounter(const CharCounter& counter) {
+  for (const auto& [c, num] : counter) std::cout << c << " (" << num << "), " << std::endl;
+  std::cout << std::endl;
 }
 
 CharCounter buildPolymerBruteForce(const PolyMap& mapping, const std::string& start_string,
@@ -110,8 +116,78 @@ CharCounter buildPolymerSequential(const PolyMap& mapping, const std::string& st
         key[0] = inserted;
         operation_stack.emplace_back(inserted, i);
       } else {
-        ++char_counter[key[1]];
         ++char_counter[inserted];
+      }
+    }
+
+    ++char_counter[key[1]];
+  }
+
+  // need to add last character in operation stack
+  ++char_counter[operation_stack.back().first];
+  operation_stack.pop_back();
+
+  return char_counter;
+}
+
+// New approach... build a recursive tree of all possible transitions
+struct PolymerTree {
+  PolymerTree(const PolyMap& mapping);
+
+  const std::map<char, std::size_t>& count(const std::string& key, int num_steps);
+
+  // Node encode the generated character per key
+  // Level 0 for a Node is level 1 seen from the key
+  struct Node {
+    Node(const std::string& key);
+
+    void initialize(char c);
+
+    void connectLeft(Node* left);
+
+    void connectRight(Node* right);
+
+    const std::map<char, std::size_t>& count(unsigned int level);
+
+   private:
+    void addCounter_(const CharCounter& new_counter, CharCounter& base_counter);
+
+    std::string key_;
+    char generated_char_;
+
+    Node* left_ = nullptr;
+    Node* right_ = nullptr;
+
+    std::vector<CharCounter> counter_;  // counter for each level down
+  };
+
+ private:
+  // Will also take care of correctly destroying all elements of tree
+  std::map<std::string, Node> node_list_;
+};
+
+CharCounter buildPolymerTree(const PolyMap& mapping, const std::string& start_string,
+                             std::size_t num_steps) {
+  PolymerTree tree(mapping);
+
+  CharCounter char_counter;
+
+  // initialise all counters somewhat inefficiently
+  for (const auto& elem : mapping) char_counter[elem.second] = 0;
+
+  // add starting string to char counter
+  for (const auto& c : start_string) ++char_counter[c];
+
+  // process subtree of character pairs one at a time
+  if (num_steps > 0) {
+    for (std::size_t i = 0; i < start_string.size() - 1; ++i) {
+      std::string key;
+      key.push_back(start_string[i]);
+      key.push_back(start_string[i + 1]);
+
+      // add counter
+      for (const auto& elem : tree.count(key, num_steps - 1)) {
+        char_counter[elem.first] += elem.second;
       }
     }
   }
@@ -176,7 +252,18 @@ int main(int argc, char** argv) {
        */
       char_counter = buildPolymerSequential(mapping, start_string, num_steps);
     } break;
+    case Method::TREE: {
+      std::cout << "Tree method" << std::endl;
+
+      /*
+       * option 3 : Approach for big polymers, build linked tree
+       */
+      char_counter = buildPolymerTree(mapping, start_string, num_steps);
+    } break;
   }
+
+  // print
+  printCounter(char_counter);
 
   // compute desired result
   std::size_t most_common = 0;
@@ -201,3 +288,78 @@ int main(int argc, char** argv) {
 
   return 0;
 }
+
+namespace {
+
+PolymerTree::PolymerTree(const PolyMap& mapping) {
+  for (const auto& [key, c] : mapping) {
+    // e.g. getting AB -> C
+
+    // children generated : AC & CB
+    std::string key_left;
+    key_left.push_back(key[0]);
+    key_left.push_back(c);
+
+    std::string key_right;
+    key_right.push_back(c);
+    key_right.push_back(key[1]);
+
+    // generate nodes if they don't exist yet, returns std::pair<iterator,bool>
+    auto res = node_list_.emplace(key, key);
+    auto left = node_list_.emplace(key_left, key_left);
+    auto right = node_list_.emplace(key_right, key_right);
+
+    // initialize generated child character
+    res.first->second.initialize(c);
+
+    // add connections
+    res.first->second.connectLeft(&left.first->second);
+    res.first->second.connectRight(&right.first->second);
+  }
+}
+
+const CharCounter& PolymerTree::count(const std::string& key, int num_steps) {
+  return node_list_.at(key).count(num_steps);
+}
+
+PolymerTree::Node::Node(const std::string& key) : key_(key), generated_char_(' ') {}
+
+void PolymerTree::Node::initialize(char c) {
+  // level 0
+  counter_.push_back(CharCounter{});
+  counter_.front()[c] = 1;
+}
+
+void PolymerTree::Node::connectLeft(Node* left) { left_ = left; }
+
+void PolymerTree::Node::connectRight(Node* right) { right_ = right; }
+
+const CharCounter& PolymerTree::Node::count(unsigned int level) {
+  // TODO : we can skip unused levels
+  if (counter_.size() <= level) {
+    // a bit more work right now, but this recursively fills elements further down the tree
+    // and we don't have to worry about empty elements
+    for (unsigned int i = counter_.size(); i <= level; ++i) {
+      counter_.push_back(counter_.front());  // start with very top level
+      auto& current_max = counter_.back();
+
+      addCounter_(left_->count(i - 1), current_max);
+      addCounter_(right_->count(i - 1), current_max);
+    }
+  }
+
+  return counter_[level];
+}
+
+void PolymerTree::Node::addCounter_(const CharCounter& new_counter, CharCounter& base_counter) {
+  for (const auto& elem : new_counter) {
+    auto it = base_counter.find(elem.first);
+    if (it == base_counter.end()) {
+      base_counter[elem.first] = elem.second;
+    } else {
+      it->second += elem.second;
+    }
+  }
+}
+
+}  // namespace
