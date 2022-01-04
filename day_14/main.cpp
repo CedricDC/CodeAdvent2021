@@ -13,7 +13,7 @@
 // - every possible pair of characters has an insertion
 namespace {
 
-enum class Method { BRUTE_FORCE, SEQUENTIAL, TREE };
+enum class Method { BRUTE_FORCE, SEQUENTIAL, TREE, TREE_OPTIMIZED };
 
 using PolyMap = std::map<std::string, char>;
 using CharCounter = std::map<char, std::size_t>;
@@ -130,7 +130,7 @@ CharCounter buildPolymerSequential(const PolyMap& mapping, const std::string& st
   return char_counter;
 }
 
-// New approach... build a recursive tree of all possible transitions
+// Build a recursive tree of all possible transitions
 struct PolymerTree {
   PolymerTree(const PolyMap& mapping);
 
@@ -153,7 +153,6 @@ struct PolymerTree {
     void addCounter_(const CharCounter& new_counter, CharCounter& base_counter);
 
     std::string key_;
-    char generated_char_;
 
     Node* left_ = nullptr;
     Node* right_ = nullptr;
@@ -189,6 +188,77 @@ CharCounter buildPolymerTree(const PolyMap& mapping, const std::string& start_st
       for (const auto& elem : tree.count(key, num_steps - 1)) {
         char_counter[elem.first] += elem.second;
       }
+    }
+  }
+
+  return char_counter;
+}
+
+// Build a recursive tree of all possible transitions, optimizing lookup
+struct PolymerTreeOptimized {
+  PolymerTreeOptimized(const PolyMap& mapping, std::size_t max_level);
+
+  void addCount(const std::string& key, std::size_t level, CharCounter& char_counter);
+
+  // Node encode the generated character per key
+  // Level 0 for a Node is level 1 seen from the key
+  struct Node {
+    // vector encoding: counter for A - Z for each level
+    using LocalCounter = std::vector<std::size_t>;
+
+    Node(const std::string& key, std::size_t max_level);
+
+    void initialize(char c);
+
+    void connectLeft(Node* left);
+
+    void connectRight(Node* right);
+
+    void addCount(CharCounter& char_counter, std::size_t level);
+
+   private:
+    std::size_t* count_(unsigned int level);
+
+    static constexpr std::size_t getStartIdx(std::size_t level) { return 26 * level; }
+    static constexpr std::size_t getCharIdx(std::size_t level, char c) {
+      return 26 * level + (c - 'A');
+    }
+
+    std::string key_;
+    char generated_char_;
+
+    Node* left_ = nullptr;
+    Node* right_ = nullptr;
+
+    LocalCounter counter_;
+    std::vector<bool> counter_initialized_;
+  };
+
+ private:
+  // Will also take care of correctly destroying all elements of tree
+  std::map<std::string, Node> node_list_;
+};
+
+CharCounter buildPolymerTreeOptimized(const PolyMap& mapping, const std::string& start_string,
+                                      std::size_t num_steps) {
+  CharCounter char_counter;
+
+  // initialise all counters
+  for (const auto& elem : mapping) char_counter[elem.second] = 0;
+
+  // add starting string to char counter
+  for (const auto& c : start_string) ++char_counter[c];
+
+  // process subtree of character pairs one at a time
+  if (num_steps > 0) {
+    PolymerTreeOptimized tree(mapping, num_steps - 1);
+
+    for (std::size_t i = 0; i < start_string.size() - 1; ++i) {
+      std::string key;
+      key.push_back(start_string[i]);
+      key.push_back(start_string[i + 1]);
+
+      tree.addCount(key, num_steps - 1, char_counter);
     }
   }
 
@@ -260,6 +330,14 @@ int main(int argc, char** argv) {
        */
       char_counter = buildPolymerTree(mapping, start_string, num_steps);
     } break;
+    case Method::TREE_OPTIMIZED: {
+      std::cout << "Optimized Tree method" << std::endl;
+
+      /*
+       * option 4 : Approach for big polymers, build linked tree, using contiguous memory
+       */
+      char_counter = buildPolymerTreeOptimized(mapping, start_string, num_steps);
+    } break;
   }
 
   // print
@@ -322,7 +400,7 @@ const CharCounter& PolymerTree::count(const std::string& key, int num_steps) {
   return node_list_.at(key).count(num_steps);
 }
 
-PolymerTree::Node::Node(const std::string& key) : key_(key), generated_char_(' ') {}
+PolymerTree::Node::Node(const std::string& key) : key_(key) {}
 
 void PolymerTree::Node::initialize(char c) {
   // level 0
@@ -360,6 +438,83 @@ void PolymerTree::Node::addCounter_(const CharCounter& new_counter, CharCounter&
       it->second += elem.second;
     }
   }
+}
+
+PolymerTreeOptimized::PolymerTreeOptimized(const PolyMap& mapping, std::size_t max_level) {
+  for (const auto& [key, c] : mapping) {
+    // e.g. getting AB -> C
+
+    // children generated : AC & CB
+    std::string key_left;
+    key_left.push_back(key[0]);
+    key_left.push_back(c);
+
+    std::string key_right;
+    key_right.push_back(c);
+    key_right.push_back(key[1]);
+
+    // generate nodes if they don't exist yet, returns std::pair<iterator,bool>
+    auto res = node_list_.try_emplace(key, key, max_level);
+    auto left = node_list_.try_emplace(key_left, key_left, max_level);
+    auto right = node_list_.try_emplace(key_right, key_right, max_level);
+
+    // initialize generated child character
+    res.first->second.initialize(c);
+
+    // add connections
+    res.first->second.connectLeft(&left.first->second);
+    res.first->second.connectRight(&right.first->second);
+  }
+}
+
+void PolymerTreeOptimized::addCount(const std::string& key, std::size_t level,
+                                    CharCounter& char_counter) {
+  node_list_.at(key).addCount(char_counter, level);
+}
+
+PolymerTreeOptimized::Node::Node(const std::string& key, std::size_t max_level)
+    : key_(key),
+      generated_char_(' '),
+      counter_((max_level + 1) * 26, 0),
+      counter_initialized_((max_level + 1), false) {}
+
+void PolymerTreeOptimized::Node::initialize(char c) {
+  // level 0
+  unsigned int level = 0;
+  if (!counter_initialized_[level]) {
+    generated_char_ = c;
+    counter_[getCharIdx(level, generated_char_)] = 1;
+    counter_initialized_[level] = true;
+  }
+}
+
+void PolymerTreeOptimized::Node::connectLeft(Node* left) { left_ = left; }
+
+void PolymerTreeOptimized::Node::connectRight(Node* right) { right_ = right; }
+
+void PolymerTreeOptimized::Node::addCount(CharCounter& char_counter, std::size_t level) {
+  std::size_t* local_counter = count_(level);
+  for (unsigned int i = 0; i < 26; ++i, ++local_counter) {
+    if (*local_counter > 0) char_counter[static_cast<char>('A' + i)] += *local_counter;
+  }
+}
+
+std::size_t* PolymerTreeOptimized::Node::count_(unsigned int level) {
+  std::size_t* lvl_start = counter_.data() + getStartIdx(level);
+
+  if (!counter_initialized_[level]) {
+    counter_[getCharIdx(level, generated_char_)] = 1;
+
+    auto left_counter = left_->count_(level - 1);
+    for (unsigned int i = 0; i < 26; ++i) *(lvl_start + i) += *(left_counter++);
+
+    auto right_counter = right_->count_(level - 1);
+    for (unsigned int i = 0; i < 26; ++i) *(lvl_start + i) += *(right_counter++);
+
+    counter_initialized_[level] = true;
+  }
+
+  return lvl_start;
 }
 
 }  // namespace
